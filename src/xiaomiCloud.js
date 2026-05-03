@@ -8,6 +8,86 @@ class XiaomiCloud {
     this.ssecurity = options.ssecurity;
     this.serviceToken = options.serviceToken;
     this.log = options.log;
+    this.requestTimeout = Number(options.requestTimeout || 15000);
+    this.requestRetries = Math.max(Number(options.requestRetries || 2), 0);
+    this.retryDelay = Math.max(Number(options.retryDelay || 1000), 0);
+  }
+
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  shouldRetryRequestError(error) {
+    const status = error?.response?.status;
+
+    if (!status) {
+      return true;
+    }
+
+    return status === 429 || status >= 500;
+  }
+
+  formatRequestError(error) {
+    const status = error?.response?.status;
+    const code = error?.code;
+
+    if (status) {
+      return `HTTP ${status}`;
+    }
+
+    if (code) {
+      return `${code}: ${error.message || 'Unknown request error'}`;
+    }
+
+    return error?.message || 'Unknown request error';
+  }
+
+  async postWithRetry(url, fields, path) {
+    let lastError;
+
+    for (let attempt = 0; attempt <= this.requestRetries; attempt++) {
+      try {
+        return await axios.post(url, null, {
+          params: fields,
+          timeout: this.requestTimeout,
+          headers: {
+            Accept: '*/*',
+            'Accept-Encoding': 'identity',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Android-7.1.1-1.0.0-ONEPLUS A3010-136-ABCDABCDABCDABCD',
+            'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
+            'MIOT-ENCRYPT-ALGORITHM': 'ENCRYPT-RC4',
+            Cookie: [
+              `userId=${this.userId}`,
+              `yetAnotherServiceToken=${this.serviceToken}`,
+              `serviceToken=${this.serviceToken}`,
+              'locale=en_GB',
+              'timezone=GMT+03:00',
+              'is_daylight=1',
+              'dst_offset=3600000',
+              'channel=MI_APP_STORE',
+            ].join('; '),
+          },
+        });
+      } catch (error) {
+        lastError = error;
+
+        if (attempt >= this.requestRetries || !this.shouldRetryRequestError(error)) {
+          break;
+        }
+
+        const delay = this.retryDelay * (2 ** attempt);
+        if (this.log && typeof this.log.warn === 'function') {
+          this.log.warn(
+            `Xiaomi Cloud request failed for ${path} (${this.formatRequestError(error)}). Retrying in ${delay}ms.`,
+          );
+        }
+
+        await this.sleep(delay);
+      }
+    }
+
+    throw new Error(`Xiaomi Cloud request failed for ${path}: ${this.formatRequestError(lastError)}`);
   }
 
   apiUrl(path) {
@@ -129,28 +209,7 @@ class XiaomiCloud {
     const signedNonce = this.signedNonce(nonce);
     const fields = this.generateEncryptedParams(url, 'POST', signedNonce, nonce, params);
 
-    const response = await axios.post(url, null, {
-      params: fields,
-      timeout: 15000,
-      headers: {
-        Accept: '*/*',
-        'Accept-Encoding': 'identity',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Android-7.1.1-1.0.0-ONEPLUS A3010-136-ABCDABCDABCDABCD',
-        'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
-        'MIOT-ENCRYPT-ALGORITHM': 'ENCRYPT-RC4',
-        Cookie: [
-          `userId=${this.userId}`,
-          `yetAnotherServiceToken=${this.serviceToken}`,
-          `serviceToken=${this.serviceToken}`,
-          'locale=en_GB',
-          'timezone=GMT+03:00',
-          'is_daylight=1',
-          'dst_offset=3600000',
-          'channel=MI_APP_STORE',
-        ].join('; '),
-      },
-    });
+    const response = await this.postWithRetry(url, fields, path);
 
     if (response && typeof response.data === 'object' && response.data !== null) {
       return response.data;

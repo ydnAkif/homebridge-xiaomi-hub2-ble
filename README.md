@@ -2,6 +2,8 @@
 
 Homebridge plugin for Xiaomi Smart Home Hub 2 BLE temperature and humidity sensors via Xiaomi Cloud.
 
+This repository includes a Homebridge Config UI X schema in `config.schema.json` and a GitHub Actions CI workflow that runs syntax checks and tests on every push and pull request.
+
 ## Quick Start
 
 1. Get your Xiaomi Cloud credentials: `userId`, `ssecurity`, and `serviceToken`.
@@ -47,6 +49,8 @@ Common config file location:
 ```bash
 ~/.homebridge/config.json
 ```
+
+If you use Homebridge Config UI X, this project also ships with a `config.schema.json` file so the platform can be configured from the UI.
 
 In the project directory:
 
@@ -189,6 +193,12 @@ Add the following platform block under `platforms`:
 
 The `model` field is optional. If omitted, the plugin uses `miaomiaoce.sensor_ht.t2` by default.
 
+Optional advanced request settings:
+
+- `requestTimeout`: Xiaomi Cloud request timeout in milliseconds. Default: `15000`
+- `requestRetries`: Number of retries for transient Xiaomi Cloud failures. Default: `2`
+- `retryDelay`: Initial retry delay in milliseconds. Default: `1000`
+
 ## Notes
 
 - `pollInterval` minimum is 60 seconds. Recommended value is 120 seconds or higher.
@@ -204,6 +214,8 @@ After restarting Homebridge, you should see log lines similar to these:
 - `Bedroom 1: 23.4°C / 48.1%`
 
 If the plugin starts correctly and the sensors appear in HomeKit with temperature and humidity values, the setup is working.
+
+Continuous integration is also enabled for this repository. Every push and pull request runs syntax checks and the automated test suite.
 
 ## Security Notes
 

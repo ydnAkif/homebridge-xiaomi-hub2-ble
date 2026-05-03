@@ -4,6 +4,26 @@
   "description": "Homebridge plugin for Xiaomi Smart Home Hub 2 BLE temperature and humidity sensors via Xiaomi Cloud",
   "main": "src/index.js",
   "displayName": "Xiaomi Hub 2 BLE",
+  "author": "Akif Aydin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ydnAkif/homebridge-xiaomi-hub2-ble.git"
+  },
+  "homepage": "https://github.com/ydnAkif/homebridge-xiaomi-hub2-ble#readme",
+  "bugs": {
+    "url": "https://github.com/ydnAkif/homebridge-xiaomi-hub2-ble/issues"
+  },
+  "files": [
+    "src",
+    "config.schema.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "lint": "node --check src/index.js && node --check src/platform.js && node --check src/xiaomiCloud.js && node --check test/platform.test.js && node --check test/xiaomiCloud.test.js",
+    "test": "node --test"
+  },
   "keywords": [
     "homebridge-plugin",
     "xiaomi",
@@ -15,6 +35,9 @@
   "engines": {
     "node": ">=18",
     "homebridge": ">=1.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "axios": "^1.0.0"

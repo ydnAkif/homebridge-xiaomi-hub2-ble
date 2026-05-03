@@ -25,6 +25,9 @@ class XiaomiHub2BLEPlatform {
       userId: this.config.userId,
       ssecurity: this.config.ssecurity,
       serviceToken: this.config.serviceToken,
+      requestTimeout: this.config.requestTimeout,
+      requestRetries: this.config.requestRetries,
+      retryDelay: this.config.retryDelay,
       log: this.log,
     });
 
@@ -53,6 +56,21 @@ class XiaomiHub2BLEPlatform {
 
     if (!Array.isArray(this.config.sensors) || this.config.sensors.length === 0) {
       this.log.warn('No sensors configured.');
+      return false;
+    }
+
+    if (this.config.requestTimeout !== undefined && Number(this.config.requestTimeout) <= 0) {
+      this.log.error('requestTimeout must be greater than 0.');
+      return false;
+    }
+
+    if (this.config.requestRetries !== undefined && Number(this.config.requestRetries) < 0) {
+      this.log.error('requestRetries must be 0 or greater.');
+      return false;
+    }
+
+    if (this.config.retryDelay !== undefined && Number(this.config.retryDelay) < 0) {
+      this.log.error('retryDelay must be 0 or greater.');
       return false;
     }
 

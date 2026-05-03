@@ -1,0 +1,130 @@
+{
+  "pluginAlias": "XiaomiHub2BLE",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Configure Xiaomi Cloud credentials and the BLE sensor DID values you want to expose to HomeKit.",
+  "footerDisplay": "Keep your Xiaomi Cloud credentials private. Each configured sensor must use a unique DID value.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Platform Name",
+        "type": "string",
+        "default": "Xiaomi Hub 2 BLE",
+        "required": true
+      },
+      "country": {
+        "title": "Country",
+        "type": "string",
+        "default": "tw",
+        "oneOf": [
+          {
+            "title": "Taiwan (tw)",
+            "enum": ["tw"]
+          },
+          {
+            "title": "China (cn)",
+            "enum": ["cn"]
+          },
+          {
+            "title": "Germany (de)",
+            "enum": ["de"]
+          },
+          {
+            "title": "United States (us)",
+            "enum": ["us"]
+          },
+          {
+            "title": "Singapore (sg)",
+            "enum": ["sg"]
+          },
+          {
+            "title": "India (in)",
+            "enum": ["in"]
+          },
+          {
+            "title": "Russia (ru)",
+            "enum": ["ru"]
+          },
+          {
+            "title": "Korea (kr)",
+            "enum": ["kr"]
+          },
+          {
+            "title": "Japan (jp)",
+            "enum": ["jp"]
+          }
+        ]
+      },
+      "userId": {
+        "title": "User ID",
+        "type": "string",
+        "required": true
+      },
+      "ssecurity": {
+        "title": "ssecurity",
+        "type": "string",
+        "required": true
+      },
+      "serviceToken": {
+        "title": "Service Token",
+        "type": "string",
+        "required": true
+      },
+      "pollInterval": {
+        "title": "Poll Interval (seconds)",
+        "type": "integer",
+        "default": 120,
+        "minimum": 60,
+        "required": true
+      },
+      "requestTimeout": {
+        "title": "Request Timeout (ms)",
+        "type": "integer",
+        "default": 15000,
+        "minimum": 1,
+        "description": "Timeout for Xiaomi Cloud requests in milliseconds."
+      },
+      "requestRetries": {
+        "title": "Request Retries",
+        "type": "integer",
+        "default": 2,
+        "minimum": 0,
+        "description": "How many times to retry transient Xiaomi Cloud failures."
+      },
+      "retryDelay": {
+        "title": "Initial Retry Delay (ms)",
+        "type": "integer",
+        "default": 1000,
+        "minimum": 0,
+        "description": "Base delay used before retrying transient Xiaomi Cloud failures."
+      },
+      "sensors": {
+        "title": "Sensors",
+        "type": "array",
+        "required": true,
+        "items": {
+          "title": "Sensor",
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "required": true
+            },
+            "did": {
+              "title": "DID",
+              "type": "string",
+              "required": true
+            },
+            "model": {
+              "title": "Model",
+              "type": "string",
+              "placeholder": "miaomiaoce.sensor_ht.t2"
+            }
+          }
+        }
+      }
+    }
+  }
+}
