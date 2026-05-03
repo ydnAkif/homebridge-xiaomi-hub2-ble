@@ -64,11 +64,13 @@
       "ssecurity": {
         "title": "ssecurity",
         "type": "string",
+        "format": "password",
         "required": true
       },
       "serviceToken": {
         "title": "Service Token",
         "type": "string",
+        "format": "password",
         "required": true
       },
       "pollInterval": {
@@ -99,6 +101,36 @@
         "minimum": 0,
         "description": "Base delay used before retrying transient Xiaomi Cloud failures."
       },
+      "adaptivePolling": {
+        "title": "Adaptive Polling",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Enable Adaptive Polling",
+            "type": "boolean",
+            "default": false
+          },
+          "activePollInterval": {
+            "title": "Active Poll Interval (seconds)",
+            "type": "integer",
+            "default": 15,
+            "minimum": 10,
+            "description": "Fast polling interval used when motion is active."
+          },
+          "motionHoldSeconds": {
+            "title": "Motion Hold Seconds",
+            "type": "integer",
+            "default": 120,
+            "minimum": 30,
+            "description": "How long fast polling remains active after motion is detected."
+          },
+          "motionKey": {
+            "title": "Default Motion Key",
+            "type": "string",
+            "description": "Optional Xiaomi property key for motion detection when not defined per sensor."
+          }
+        }
+      },
       "sensors": {
         "title": "Sensors",
         "type": "array",
@@ -121,6 +153,16 @@
               "title": "Model",
               "type": "string",
               "placeholder": "miaomiaoce.sensor_ht.t2"
+            },
+            "motionDid": {
+              "title": "Motion DID",
+              "type": "string",
+              "description": "Optional DID used only for motion detection."
+            },
+            "motionKey": {
+              "title": "Motion Key",
+              "type": "string",
+              "description": "Optional Xiaomi motion property key for this sensor."
             }
           }
         }

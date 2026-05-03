@@ -199,6 +199,20 @@ Optional advanced request settings:
 - `requestRetries`: Number of retries for transient Xiaomi Cloud failures. Default: `2`
 - `retryDelay`: Initial retry delay in milliseconds. Default: `1000`
 
+Adaptive polling settings:
+
+- `adaptivePolling.enabled`: Enable motion-aware polling. Default: `false`
+- `adaptivePolling.activePollInterval`: Fast polling when motion is active. Default: `15` (recommended `10-20`)
+- `adaptivePolling.motionHoldSeconds`: Keep fast polling for this duration after motion. Default: `120`
+- `adaptivePolling.motionKey`: Default Xiaomi motion key if not set per sensor
+- `sensors[].motionKey`: Optional per-sensor motion key override
+- `sensors[].motionDid`: Optional per-sensor DID used for motion detection
+
+Behavior:
+
+- Motion active: polls with fast interval (`10-20s`)
+- Normal state: polls with base interval (`pollInterval`, default `120s`)
+
 ## Notes
 
 - `pollInterval` minimum is 60 seconds. Recommended value is 120 seconds or higher.
@@ -223,6 +237,8 @@ Continuous integration is also enabled for this repository. Every push and pull 
 - Never post terminal output that contains your Xiaomi Cloud credentials.
 - Never commit downloaded token extraction files or temporary archives if they contain sensitive data.
 - Rotate your Xiaomi credentials if you accidentally expose them publicly.
+- `ssecurity` and `serviceToken` are masked as password fields in Config UI X.
+- Cloud error and retry logs redact sensitive credential values.
 
 ## Troubleshooting
 

@@ -72,3 +72,26 @@ test('request retries once and returns parsed response', async () => {
     result: [{ value: '["0201"]' }],
   });
 });
+
+test('request warns and returns null on invalid JSON payload', async () => {
+  const warnings = [];
+  const cloud = createCloud({
+    log: {
+      warn(message) {
+        warnings.push(message);
+      },
+    },
+  });
+
+  cloud.generateNonce = () => 'nonce';
+  cloud.signedNonce = () => 'signed-nonce';
+  cloud.generateEncryptedParams = () => ({ _nonce: 'nonce', data: 'encrypted' });
+  cloud.decryptRc4 = () => '{invalid-json';
+
+  axios.post = async () => ({ data: 'encrypted-response' });
+
+  const response = await cloud.request('/user/get_user_device_data', { data: '{}' });
+
+  assert.equal(response, null);
+  assert.equal(warnings.includes('Invalid data from Xiaomi Cloud'), true);
+});

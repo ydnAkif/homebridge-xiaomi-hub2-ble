@@ -14,11 +14,20 @@ class XiaomiHub2BLEPlatform {
     this.accessories = new Map();
     this.updateInProgress = false;
     this.updateTimer = null;
+    this.deviceStates = {
+      temp: {},
+      humidity: {},
+    };
+    this.lastMotionDetectedAt = 0;
 
     Service = api.hap.Service;
     Characteristic = api.hap.Characteristic;
 
     this.pollInterval = Math.max(Number(this.config.pollInterval || 120), 60);
+    this.adaptivePolling = this.config.adaptivePolling || {};
+    this.adaptivePollingEnabled = Boolean(this.adaptivePolling.enabled);
+    this.activePollInterval = Math.max(Number(this.adaptivePolling.activePollInterval || 15), 10);
+    this.motionHoldSeconds = Math.max(Number(this.adaptivePolling.motionHoldSeconds || 120), 30);
 
     this.cloud = new XiaomiCloud({
       country: this.config.country || 'tw',
@@ -41,10 +50,6 @@ class XiaomiHub2BLEPlatform {
 
       this.registerSensors();
       this.updateAll();
-
-      this.updateTimer = setInterval(() => {
-        this.updateAll();
-      }, this.pollInterval * 1000);
     });
   }
 
@@ -74,7 +79,107 @@ class XiaomiHub2BLEPlatform {
       return false;
     }
 
+    if (this.adaptivePollingEnabled) {
+      if (this.activePollInterval >= this.pollInterval) {
+        this.log.error('adaptivePolling.activePollInterval must be less than pollInterval.');
+        return false;
+      }
+
+      if (this.motionHoldSeconds < 30) {
+        this.log.error('adaptivePolling.motionHoldSeconds must be 30 or greater.');
+        return false;
+      }
+    }
+
     return true;
+  }
+
+  sanitizeLogMessage(message) {
+    let result = String(message || 'Unknown error');
+    const secrets = [this.config.userId, this.config.ssecurity, this.config.serviceToken].filter(Boolean);
+
+    for (const secret of secrets) {
+      result = result.split(String(secret)).join('[REDACTED]');
+    }
+
+    return result;
+  }
+
+  scheduleNextUpdate(nextPollInterval) {
+    if (this.updateTimer) {
+      clearTimeout(this.updateTimer);
+    }
+
+    this.updateTimer = setTimeout(() => {
+      this.updateAll();
+    }, nextPollInterval * 1000);
+  }
+
+  getNextPollInterval() {
+    if (!this.adaptivePollingEnabled) {
+      return this.pollInterval;
+    }
+
+    const motionActiveWindow =
+      this.lastMotionDetectedAt > 0 &&
+      Date.now() - this.lastMotionDetectedAt < this.motionHoldSeconds * 1000;
+
+    return motionActiveWindow ? this.activePollInterval : this.pollInterval;
+  }
+
+  isMotionActive(raw) {
+    if (raw === undefined || raw === null) {
+      return false;
+    }
+
+    let value = raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        value = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch (_error) {
+        value = raw;
+      }
+    }
+
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    if (typeof value === 'number') {
+      return value > 0;
+    }
+
+    const text = String(value).trim().toLowerCase();
+    if (['true', 'on', 'motion', 'active'].includes(text)) {
+      return true;
+    }
+
+    if (['false', 'off', 'idle', 'inactive'].includes(text)) {
+      return false;
+    }
+
+    if (/^[0-9]+$/.test(text)) {
+      return Number(text) > 0;
+    }
+
+    if (/^[0-9a-f]+$/i.test(text)) {
+      return parseInt(text, 16) > 0;
+    }
+
+    return false;
+  }
+
+  async getSensorMotionState(sensor) {
+    const motionKey = sensor.motionKey || this.adaptivePolling.motionKey;
+    if (!motionKey) {
+      return false;
+    }
+
+    const motionDid = sensor.motionDid || sensor.did;
+    const raw = await this.cloud.getRawValue(motionDid, String(motionKey));
+
+    return this.isMotionActive(raw);
   }
 
   configureAccessory(accessory) {
@@ -173,17 +278,24 @@ class XiaomiHub2BLEPlatform {
 
     this.updateInProgress = true;
     const sensors = this.config.sensors || [];
+    let motionDetectedInCycle = false;
 
     try {
       for (const sensor of sensors) {
         try {
-          await this.updateSensor(sensor);
+          const motionDetected = await this.updateSensor(sensor);
+          motionDetectedInCycle = motionDetectedInCycle || motionDetected;
         } catch (error) {
-          this.log.warn(`Update failed for ${sensor.name}: ${error.message || error}`);
+          this.log.warn(`Update failed for ${sensor.name}: ${this.sanitizeLogMessage(error.message || error)}`);
         }
+      }
+
+      if (motionDetectedInCycle) {
+        this.lastMotionDetectedAt = Date.now();
       }
     } finally {
       this.updateInProgress = false;
+      this.scheduleNextUpdate(this.getNextPollInterval());
     }
   }
 
@@ -203,10 +315,33 @@ class XiaomiHub2BLEPlatform {
       this.cloud.getHumidity(sensor.did),
     ]);
 
-    tempService.updateCharacteristic(Characteristic.CurrentTemperature, temperature);
-    humService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, humidity);
+    if (!Number.isFinite(temperature) || !Number.isFinite(humidity)) {
+      throw new Error(`Invalid numeric payload for ${sensor.name}`);
+    }
+
+    const stateId = sensor.did;
+    if (this.deviceStates.temp[stateId] !== temperature) {
+      tempService.updateCharacteristic(Characteristic.CurrentTemperature, temperature);
+      this.deviceStates.temp[stateId] = temperature;
+    }
+
+    if (this.deviceStates.humidity[stateId] !== humidity) {
+      humService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, humidity);
+      this.deviceStates.humidity[stateId] = humidity;
+    }
 
     this.log.info(`${sensor.name}: ${temperature}°C / ${humidity}%`);
+
+    if (!this.adaptivePollingEnabled) {
+      return false;
+    }
+
+    try {
+      return await this.getSensorMotionState(sensor);
+    } catch (error) {
+      this.log.debug(`Motion check failed for ${sensor.name}: ${this.sanitizeLogMessage(error.message || error)}`);
+      return false;
+    }
   }
 }
 

@@ -14,6 +14,7 @@ function createPlatformFixture(config = {}) {
       this.subtype = subtype;
       this.characteristics = new Map();
       this.updatedValues = new Map();
+      this.updateCalls = new Map();
     }
 
     setCharacteristic(characteristic, value) {
@@ -38,6 +39,7 @@ function createPlatformFixture(config = {}) {
 
     updateCharacteristic(characteristic, value) {
       this.updatedValues.set(characteristic, value);
+      this.updateCalls.set(characteristic, (this.updateCalls.get(characteristic) || 0) + 1);
     }
   }
 
@@ -155,4 +157,52 @@ test('updateAll skips when an update cycle is already running', async () => {
   await platform.updateAll();
 
   assert.equal(updateCalls, 0);
+});
+
+test('validateConfig rejects invalid adaptive polling intervals', () => {
+  const { platform } = createPlatformFixture({
+    userId: 'user-id',
+    ssecurity: 'AA==',
+    serviceToken: 'service-token',
+    pollInterval: 120,
+    adaptivePolling: {
+      enabled: true,
+      activePollInterval: 120,
+    },
+    sensors: [{ name: 'Bedroom', did: '123' }],
+  });
+
+  assert.equal(platform.validateConfig(), false);
+});
+
+test('updateSensor sends characteristic updates only on state delta', async () => {
+  const fixture = createPlatformFixture({
+    userId: 'user-id',
+    ssecurity: 'AA==',
+    serviceToken: 'service-token',
+    sensors: [{ name: 'Bedroom', did: '123' }],
+  });
+
+  fixture.platform.registerSensors();
+
+  fixture.platform.cloud.getTemperature = async () => 22.5;
+  fixture.platform.cloud.getHumidity = async () => 50.1;
+
+  await fixture.platform.updateSensor({ name: 'Bedroom', did: '123' });
+  await fixture.platform.updateSensor({ name: 'Bedroom', did: '123' });
+
+  const accessory = fixture.platform.accessories.get('uuid:123');
+  const tempService = accessory.getService(fixture.api.hap.Service.TemperatureSensor);
+  const humService = accessory.getService(fixture.api.hap.Service.HumiditySensor);
+
+  assert.equal(tempService.updateCalls.get(fixture.api.hap.Characteristic.CurrentTemperature), 1);
+  assert.equal(humService.updateCalls.get(fixture.api.hap.Characteristic.CurrentRelativeHumidity), 1);
+
+  fixture.platform.cloud.getTemperature = async () => 23.5;
+  fixture.platform.cloud.getHumidity = async () => 50.1;
+
+  await fixture.platform.updateSensor({ name: 'Bedroom', did: '123' });
+
+  assert.equal(tempService.updateCalls.get(fixture.api.hap.Characteristic.CurrentTemperature), 2);
+  assert.equal(humService.updateCalls.get(fixture.api.hap.Characteristic.CurrentRelativeHumidity), 1);
 });

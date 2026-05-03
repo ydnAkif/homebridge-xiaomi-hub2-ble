@@ -13,6 +13,21 @@ class XiaomiCloud {
     this.retryDelay = Math.max(Number(options.retryDelay || 1000), 0);
   }
 
+  redactSensitive(value) {
+    if (value === undefined || value === null) {
+      return value;
+    }
+
+    let text = String(value);
+    const secrets = [this.userId, this.ssecurity, this.serviceToken].filter(Boolean);
+
+    for (const secret of secrets) {
+      text = text.split(String(secret)).join('[REDACTED]');
+    }
+
+    return text;
+  }
+
   sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -36,10 +51,10 @@ class XiaomiCloud {
     }
 
     if (code) {
-      return `${code}: ${error.message || 'Unknown request error'}`;
+      return this.redactSensitive(`${code}: ${error.message || 'Unknown request error'}`);
     }
 
-    return error?.message || 'Unknown request error';
+    return this.redactSensitive(error?.message || 'Unknown request error');
   }
 
   async postWithRetry(url, fields, path) {
@@ -79,7 +94,7 @@ class XiaomiCloud {
         const delay = this.retryDelay * (2 ** attempt);
         if (this.log && typeof this.log.warn === 'function') {
           this.log.warn(
-            `Xiaomi Cloud request failed for ${path} (${this.formatRequestError(error)}). Retrying in ${delay}ms.`,
+            this.redactSensitive(`Xiaomi Cloud request failed for ${path} (${this.formatRequestError(error)}). Retrying in ${delay}ms.`),
           );
         }
 
@@ -87,7 +102,7 @@ class XiaomiCloud {
       }
     }
 
-    throw new Error(`Xiaomi Cloud request failed for ${path}: ${this.formatRequestError(lastError)}`);
+    throw new Error(this.redactSensitive(`Xiaomi Cloud request failed for ${path}: ${this.formatRequestError(lastError)}`));
   }
 
   apiUrl(path) {
@@ -229,7 +244,10 @@ class XiaomiCloud {
     try {
       return JSON.parse(decoded);
     } catch (error) {
-      throw new Error(`Failed to parse Xiaomi response for ${path}: ${error.message || error}`);
+      if (this.log && typeof this.log.warn === 'function') {
+        this.log.warn('Invalid data from Xiaomi Cloud');
+      }
+      return null;
     }
   }
 
@@ -246,8 +264,12 @@ class XiaomiCloud {
       }),
     });
 
-    if (!response || response.code !== 0) {
-      throw new Error(`Xiaomi Cloud error: ${JSON.stringify(response)}`);
+    if (!response) {
+      throw new Error('Invalid data from Xiaomi Cloud');
+    }
+
+    if (response.code !== 0) {
+      throw new Error(this.redactSensitive(`Xiaomi Cloud error: ${JSON.stringify(response)}`));
     }
 
     if (!response.result || response.result.length === 0) {
@@ -265,6 +287,10 @@ class XiaomiCloud {
   async getHumidity(did) {
     const raw = await this.getUserDeviceData(did, '4102');
     return this.decodeBleValue(raw);
+  }
+
+  async getRawValue(did, key) {
+    return this.getUserDeviceData(did, key);
   }
 
   decodeBleValue(raw) {
