@@ -2,3 +2,10 @@ node_modules/
 .vscode/
 .DS_Store
 npm-debug.log*
+.env
+.env.*
+config.json
+*.log
+token_extractor.zip
+token_extractor/
+Xiaomi-cloud-tokens-extractor/
