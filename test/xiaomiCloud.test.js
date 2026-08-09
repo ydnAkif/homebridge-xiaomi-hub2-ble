@@ -25,6 +25,19 @@ test('decodeBleValue decodes little-endian BLE values', () => {
   const cloud = createCloud();
 
   assert.equal(cloud.decodeBleValue('["0201"]'), 25.8);
+  assert.equal(cloud.decodeBleValue('["9cff"]'), -10);
+});
+
+test('constructor bounds unsafe request settings', () => {
+  const cloud = createCloud({
+    requestTimeout: 'invalid',
+    requestRetries: 100,
+    retryDelay: -10,
+  });
+
+  assert.equal(cloud.requestTimeout, 15000);
+  assert.equal(cloud.requestRetries, 5);
+  assert.equal(cloud.retryDelay, 0);
 });
 
 test('shouldRetryRequestError retries transient failures only', () => {

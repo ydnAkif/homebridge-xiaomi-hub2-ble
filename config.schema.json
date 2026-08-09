@@ -78,13 +78,15 @@
         "type": "integer",
         "default": 120,
         "minimum": 60,
+        "maximum": 86400,
         "required": true
       },
       "requestTimeout": {
         "title": "Request Timeout (ms)",
         "type": "integer",
         "default": 15000,
-        "minimum": 1,
+        "minimum": 1000,
+        "maximum": 60000,
         "description": "Timeout for Xiaomi Cloud requests in milliseconds."
       },
       "requestRetries": {
@@ -92,6 +94,7 @@
         "type": "integer",
         "default": 2,
         "minimum": 0,
+        "maximum": 5,
         "description": "How many times to retry transient Xiaomi Cloud failures."
       },
       "retryDelay": {
@@ -99,6 +102,7 @@
         "type": "integer",
         "default": 1000,
         "minimum": 0,
+        "maximum": 60000,
         "description": "Base delay used before retrying transient Xiaomi Cloud failures."
       },
       "adaptivePolling": {
@@ -115,6 +119,7 @@
             "type": "integer",
             "default": 15,
             "minimum": 10,
+            "maximum": 3600,
             "description": "Fast polling interval used when motion is active."
           },
           "motionHoldSeconds": {
@@ -122,6 +127,7 @@
             "type": "integer",
             "default": 120,
             "minimum": 30,
+            "maximum": 86400,
             "description": "How long fast polling remains active after motion is detected."
           },
           "motionKey": {

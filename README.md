@@ -195,9 +195,9 @@ The `model` field is optional. If omitted, the plugin uses `miaomiaoce.sensor_ht
 
 Optional advanced request settings:
 
-- `requestTimeout`: Xiaomi Cloud request timeout in milliseconds. Default: `15000`
-- `requestRetries`: Number of retries for transient Xiaomi Cloud failures. Default: `2`
-- `retryDelay`: Initial retry delay in milliseconds. Default: `1000`
+- `requestTimeout`: Xiaomi Cloud request timeout in milliseconds. Default: `15000`, allowed range: `1000-60000`
+- `requestRetries`: Number of retries for transient Xiaomi Cloud failures. Default: `2`, allowed range: `0-5`
+- `retryDelay`: Initial retry delay in milliseconds. Default: `1000`, allowed range: `0-60000`
 
 Adaptive polling settings:
 
