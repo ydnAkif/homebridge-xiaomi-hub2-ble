@@ -6,6 +6,11 @@ const PLATFORM_NAME = 'XiaomiHub2BLE';
 let Service;
 let Characteristic;
 
+function finiteNumberOrDefault(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 class XiaomiHub2BLEPlatform {
   constructor(log, config, api) {
     this.log = log;
@@ -23,11 +28,20 @@ class XiaomiHub2BLEPlatform {
     Service = api.hap.Service;
     Characteristic = api.hap.Characteristic;
 
-    this.pollInterval = Math.max(Number(this.config.pollInterval || 120), 60);
-    this.adaptivePolling = this.config.adaptivePolling || {};
+    this.pollInterval = Math.max(finiteNumberOrDefault(this.config.pollInterval, 120), 60);
+    this.adaptivePolling =
+      this.config.adaptivePolling && typeof this.config.adaptivePolling === 'object'
+        ? this.config.adaptivePolling
+        : {};
     this.adaptivePollingEnabled = Boolean(this.adaptivePolling.enabled);
-    this.activePollInterval = Math.max(Number(this.adaptivePolling.activePollInterval || 15), 10);
-    this.motionHoldSeconds = Math.max(Number(this.adaptivePolling.motionHoldSeconds || 120), 30);
+    this.activePollInterval = Math.max(
+      finiteNumberOrDefault(this.adaptivePolling.activePollInterval, 15),
+      10,
+    );
+    this.motionHoldSeconds = Math.max(
+      finiteNumberOrDefault(this.adaptivePolling.motionHoldSeconds, 120),
+      30,
+    );
 
     this.cloud = new XiaomiCloud({
       country: this.config.country || 'tw',
@@ -51,6 +65,33 @@ class XiaomiHub2BLEPlatform {
       this.registerSensors();
       this.updateAll();
     });
+
+    this.api.on('shutdown', () => {
+      if (this.updateTimer) {
+        clearTimeout(this.updateTimer);
+        this.updateTimer = null;
+      }
+    });
+  }
+
+  validateNumberOption(name, value, { min, max, integer = false }) {
+    if (value === undefined) {
+      return true;
+    }
+
+    const parsed = Number(value);
+    if (
+      !Number.isFinite(parsed) ||
+      parsed < min ||
+      parsed > max ||
+      (integer && !Number.isInteger(parsed))
+    ) {
+      const valueType = integer ? 'an integer' : 'a numeric';
+      this.log.error(`${name} must be ${valueType} value between ${min} and ${max}.`);
+      return false;
+    }
+
+    return true;
   }
 
   validateConfig() {
@@ -64,29 +105,86 @@ class XiaomiHub2BLEPlatform {
       return false;
     }
 
-    if (this.config.requestTimeout !== undefined && Number(this.config.requestTimeout) <= 0) {
-      this.log.error('requestTimeout must be greater than 0.');
+    if (!this.validateNumberOption('pollInterval', this.config.pollInterval, {
+      min: 60,
+      max: 86400,
+      integer: true,
+    })) {
       return false;
     }
 
-    if (this.config.requestRetries !== undefined && Number(this.config.requestRetries) < 0) {
-      this.log.error('requestRetries must be 0 or greater.');
+    if (!this.validateNumberOption('requestTimeout', this.config.requestTimeout, {
+      min: 1000,
+      max: 60000,
+      integer: true,
+    })) {
       return false;
     }
 
-    if (this.config.retryDelay !== undefined && Number(this.config.retryDelay) < 0) {
-      this.log.error('retryDelay must be 0 or greater.');
+    if (!this.validateNumberOption('requestRetries', this.config.requestRetries, {
+      min: 0,
+      max: 5,
+      integer: true,
+    })) {
+      return false;
+    }
+
+    if (!this.validateNumberOption('retryDelay', this.config.retryDelay, {
+      min: 0,
+      max: 60000,
+      integer: true,
+    })) {
+      return false;
+    }
+
+    const invalidSensor = this.config.sensors.find(
+      (sensor) =>
+        !sensor ||
+        typeof sensor.name !== 'string' ||
+        sensor.name.trim() === '' ||
+        typeof sensor.did !== 'string' ||
+        sensor.did.trim() === '',
+    );
+    if (invalidSensor) {
+      this.log.error('Every sensor must have a non-empty name and DID.');
+      return false;
+    }
+
+    const dids = this.config.sensors.map((sensor) => sensor.did.trim());
+    if (new Set(dids).size !== dids.length) {
+      this.log.error('Each sensor must use a unique DID.');
+      return false;
+    }
+
+    if (
+      this.config.adaptivePolling !== undefined &&
+      (!this.config.adaptivePolling ||
+        typeof this.config.adaptivePolling !== 'object' ||
+        Array.isArray(this.config.adaptivePolling))
+    ) {
+      this.log.error('adaptivePolling must be an object.');
       return false;
     }
 
     if (this.adaptivePollingEnabled) {
-      if (this.activePollInterval >= this.pollInterval) {
-        this.log.error('adaptivePolling.activePollInterval must be less than pollInterval.');
+      if (!this.validateNumberOption(
+        'adaptivePolling.activePollInterval',
+        this.adaptivePolling.activePollInterval,
+        { min: 10, max: 3600, integer: true },
+      )) {
         return false;
       }
 
-      if (this.motionHoldSeconds < 30) {
-        this.log.error('adaptivePolling.motionHoldSeconds must be 30 or greater.');
+      if (!this.validateNumberOption(
+        'adaptivePolling.motionHoldSeconds',
+        this.adaptivePolling.motionHoldSeconds,
+        { min: 30, max: 86400, integer: true },
+      )) {
+        return false;
+      }
+
+      if (this.activePollInterval >= this.pollInterval) {
+        this.log.error('adaptivePolling.activePollInterval must be less than pollInterval.');
         return false;
       }
     }
@@ -320,17 +418,25 @@ class XiaomiHub2BLEPlatform {
     }
 
     const stateId = sensor.did;
-    if (this.deviceStates.temp[stateId] !== temperature) {
+    const temperatureChanged = this.deviceStates.temp[stateId] !== temperature;
+    const humidityChanged = this.deviceStates.humidity[stateId] !== humidity;
+
+    if (temperatureChanged) {
       tempService.updateCharacteristic(Characteristic.CurrentTemperature, temperature);
       this.deviceStates.temp[stateId] = temperature;
     }
 
-    if (this.deviceStates.humidity[stateId] !== humidity) {
+    if (humidityChanged) {
       humService.updateCharacteristic(Characteristic.CurrentRelativeHumidity, humidity);
       this.deviceStates.humidity[stateId] = humidity;
     }
 
-    this.log.info(`${sensor.name}: ${temperature}°C / ${humidity}%`);
+    const logMessage = `${sensor.name}: ${temperature}°C / ${humidity}%`;
+    if (temperatureChanged || humidityChanged) {
+      this.log.info(logMessage);
+    } else {
+      this.log.debug(logMessage);
+    }
 
     if (!this.adaptivePollingEnabled) {
       return false;

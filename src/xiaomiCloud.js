@@ -1,6 +1,16 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
+function boundedNumber(value, fallback, min, max, integer = false) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const bounded = Math.min(Math.max(parsed, min), max);
+  return integer ? Math.floor(bounded) : bounded;
+}
+
 class XiaomiCloud {
   constructor(options) {
     this.country = options.country || 'tw';
@@ -8,9 +18,9 @@ class XiaomiCloud {
     this.ssecurity = options.ssecurity;
     this.serviceToken = options.serviceToken;
     this.log = options.log;
-    this.requestTimeout = Number(options.requestTimeout || 15000);
-    this.requestRetries = Math.max(Number(options.requestRetries || 2), 0);
-    this.retryDelay = Math.max(Number(options.retryDelay || 1000), 0);
+    this.requestTimeout = boundedNumber(options.requestTimeout, 15000, 1000, 60000, true);
+    this.requestRetries = boundedNumber(options.requestRetries, 2, 0, 5, true);
+    this.retryDelay = boundedNumber(options.retryDelay, 1000, 0, 60000, true);
   }
 
   redactSensitive(value) {
@@ -317,7 +327,12 @@ class XiaomiCloud {
       throw new Error(`Invalid BLE hex bytes: ${hex}`);
     }
 
-    return ((hi << 8) | lo) / 10;
+    let value = (hi << 8) | lo;
+    if ((value & 0x8000) !== 0) {
+      value -= 0x10000;
+    }
+
+    return value / 10;
   }
 }
 
