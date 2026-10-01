@@ -253,3 +253,11 @@ sudo journalctl -u homebridge -f
   - Invalid or expired `serviceToken`
   - Incorrect `did` value
   - Network latency or temporary Xiaomi Cloud issues
+
+## Stability safeguards
+
+Expired or rejected Xiaomi sessions stop polling after one actionable error. Renew credentials with QR login and restart the BLE child bridge to resume. Authentication cannot be renewed without Xiaomi account authorization.
+
+`staleAfterSeconds` defaults to 1800 (range 300–86400). Both HomeKit sensor services expose StatusFault until a fresh sensor report is available. Cloud history timestamps are property-change times: the latest temperature or humidity report indicates sensor activity, so an unchanged temperature does not alone make a sensor faulty. Values outside the supported ranges or malformed BLE payloads are rejected.
+
+Repeated identical sensor failures log once until recovery. Entire-platform outages back off exponentially up to 15 minutes, or the configured polling interval if longer. Successful readings restore normal polling and clear faults. Shutdown prevents new timers and ignores in-flight results.

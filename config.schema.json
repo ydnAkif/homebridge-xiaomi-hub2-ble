@@ -20,39 +20,57 @@
         "oneOf": [
           {
             "title": "Taiwan (tw)",
-            "enum": ["tw"]
+            "enum": [
+              "tw"
+            ]
           },
           {
             "title": "China (cn)",
-            "enum": ["cn"]
+            "enum": [
+              "cn"
+            ]
           },
           {
             "title": "Germany (de)",
-            "enum": ["de"]
+            "enum": [
+              "de"
+            ]
           },
           {
             "title": "United States (us)",
-            "enum": ["us"]
+            "enum": [
+              "us"
+            ]
           },
           {
             "title": "Singapore (sg)",
-            "enum": ["sg"]
+            "enum": [
+              "sg"
+            ]
           },
           {
             "title": "India (in)",
-            "enum": ["in"]
+            "enum": [
+              "in"
+            ]
           },
           {
             "title": "Russia (ru)",
-            "enum": ["ru"]
+            "enum": [
+              "ru"
+            ]
           },
           {
             "title": "Korea (kr)",
-            "enum": ["kr"]
+            "enum": [
+              "kr"
+            ]
           },
           {
             "title": "Japan (jp)",
-            "enum": ["jp"]
+            "enum": [
+              "jp"
+            ]
           }
         ]
       },
@@ -172,6 +190,14 @@
             }
           }
         }
+      },
+      "staleAfterSeconds": {
+        "title": "Sensor report freshness limit (seconds)",
+        "type": "integer",
+        "default": 1800,
+        "minimum": 300,
+        "maximum": 86400,
+        "description": "Mark both readings faulty when neither temperature nor humidity has reported within this time. Xiaomi history timestamps describe property changes."
       }
     }
   }

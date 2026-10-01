@@ -21,6 +21,8 @@ class XiaomiCloud {
     this.requestTimeout = boundedNumber(options.requestTimeout, 15000, 1000, 60000, true);
     this.requestRetries = boundedNumber(options.requestRetries, 2, 0, 5, true);
     this.retryDelay = boundedNumber(options.retryDelay, 1000, 0, 60000, true);
+    this.readingTimes = new Map();
+    this.authError = null;
   }
 
   redactSensitive(value) {
@@ -68,6 +70,7 @@ class XiaomiCloud {
   }
 
   async postWithRetry(url, fields, path) {
+    if (this.authError) throw this.authError;
     let lastError;
 
     for (let attempt = 0; attempt <= this.requestRetries; attempt++) {
@@ -95,6 +98,12 @@ class XiaomiCloud {
           },
         });
       } catch (error) {
+        const status = error?.response?.status;
+        const message = error?.response?.data?.message;
+        if (status === 401 || status === 403 || message === 'SERVICETOKEN_EXPIRED') {
+          this.authError = Object.assign(new Error('Xiaomi Cloud session expired or rejected. Renew the session using QR login, update the credentials and restart this child bridge.'), { code: 'XIAOMI_AUTH_REQUIRED' });
+          throw this.authError;
+        }
         lastError = error;
 
         if (attempt >= this.requestRetries || !this.shouldRetryRequestError(error)) {
@@ -112,7 +121,7 @@ class XiaomiCloud {
       }
     }
 
-    throw new Error(this.redactSensitive(`Xiaomi Cloud request failed for ${path}: ${this.formatRequestError(lastError)}`));
+    throw Object.assign(new Error(this.redactSensitive(`Xiaomi Cloud request failed for ${path}: ${this.formatRequestError(lastError)}`)), { status: lastError?.response?.status });
   }
 
   apiUrl(path) {
@@ -286,7 +295,13 @@ class XiaomiCloud {
       throw new Error(`No data for did=${did}, key=${key}`);
     }
 
-    return response.result[0].value;
+    const reading = response.result[0];
+    const timestamp = Number(reading.time);
+    if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp > now + 300) {
+      throw new Error('Missing or invalid sensor measurement timestamp');
+    }
+    this.readingTimes.set(`${did}:${key}`, timestamp * 1000);
+    return reading.value;
   }
 
   async getTemperature(did) {
@@ -316,7 +331,7 @@ class XiaomiCloud {
     }
 
     const hex = parsed[0];
-    if (hex.length < 4) {
+    if (!/^[0-9a-f]{4}$/i.test(hex)) {
       throw new Error(`Invalid BLE hex payload: ${hex}`);
     }
 
