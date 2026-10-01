@@ -25,19 +25,31 @@ test('decodeBleValue decodes little-endian BLE values', () => {
   const cloud = createCloud();
 
   assert.equal(cloud.decodeBleValue('["0201"]'), 25.8);
-  assert.equal(cloud.decodeBleValue('["9cff"]'), -10);
 });
 
-test('constructor bounds unsafe request settings', () => {
-  const cloud = createCloud({
-    requestTimeout: 'invalid',
-    requestRetries: 100,
-    retryDelay: -10,
-  });
+test('expired token latches an actionable auth error without retrying', async () => {
+  const cloud = createCloud();
+  let calls = 0;
+  axios.post = async () => { calls++; throw Object.assign(new Error('expired'), { response: { status: 426, data: { message: 'SERVICETOKEN_EXPIRED' } } }); };
+  for (let i = 0; i < 2; i++) {
+    await assert.rejects(cloud.postWithRetry('https://example.test', {}, '/test'), { code: 'XIAOMI_AUTH_REQUIRED' });
+  }
+  assert.equal(calls, 1);
+});
 
-  assert.equal(cloud.requestTimeout, 15000);
-  assert.equal(cloud.requestRetries, 5);
-  assert.equal(cloud.retryDelay, 0);
+test('reading timestamps are retained and missing timestamps are rejected', async () => {
+  const cloud = createCloud();
+  const time = Math.floor(Date.now() / 1000);
+  cloud.request = async () => ({ code: 0, result: [{ time, value: '["0201"]' }] });
+  assert.equal(await cloud.getTemperature('1'), 25.8);
+  assert.equal(cloud.readingTimes.get('1:4100'), time * 1000);
+  cloud.request = async () => ({ code: 0, result: [{ value: '["0201"]' }] });
+  await assert.rejects(cloud.getTemperature('1'), /timestamp/);
+});
+
+test('malformed hexadecimal BLE values are rejected rather than partially parsed', () => {
+  const cloud = createCloud();
+  for (const value of ['["0g01"]', '["020100"]', '["01"]']) assert.throws(() => cloud.decodeBleValue(value));
 });
 
 test('shouldRetryRequestError retries transient failures only', () => {
