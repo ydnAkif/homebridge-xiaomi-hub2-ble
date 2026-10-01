@@ -120,3 +120,14 @@ test('request warns and returns null on invalid JSON payload', async () => {
   assert.equal(response, null);
   assert.equal(warnings.includes('Invalid data from Xiaomi Cloud'), true);
 });
+test('constructor bounds unsafe request settings', () => {
+  const cloud = createCloud({
+    requestTimeout: 'invalid',
+    requestRetries: 100,
+    retryDelay: -10,
+  });
+
+  assert.equal(cloud.requestTimeout, 15000);
+  assert.equal(cloud.requestRetries, 5);
+  assert.equal(cloud.retryDelay, 0);
+});
