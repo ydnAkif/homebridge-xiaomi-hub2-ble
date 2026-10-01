@@ -269,3 +269,40 @@ test('shutdown during a request prevents new timers and further sensor requests'
   assert.equal(requests, 1);
   assert.equal(platform.updateTimer, null);
 });
+test('validateConfig rejects invalid numeric options', () => {
+  const { platform } = createPlatformFixture({
+    userId: 'user-id',
+    ssecurity: 'AA==',
+    serviceToken: 'service-token',
+    pollInterval: 'not-a-number',
+    sensors: [{ name: 'Bedroom', did: '123' }],
+  });
+
+  assert.equal(platform.validateConfig(), false);
+});
+test('validateConfig rejects duplicate sensor DIDs', () => {
+  const { platform } = createPlatformFixture({
+    userId: 'user-id',
+    ssecurity: 'AA==',
+    serviceToken: 'service-token',
+    sensors: [
+      { name: 'Bedroom', did: '123' },
+      { name: 'Hallway', did: '123' },
+    ],
+  });
+
+  assert.equal(platform.validateConfig(), false);
+});
+test('shutdown clears the pending update timer', () => {
+  const { eventHandlers, platform } = createPlatformFixture({
+    userId: 'user-id',
+    ssecurity: 'AA==',
+    serviceToken: 'service-token',
+    sensors: [{ name: 'Bedroom', did: '123' }],
+  });
+
+  platform.updateTimer = setTimeout(() => {}, 60000);
+  eventHandlers.get('shutdown')();
+
+  assert.equal(platform.updateTimer, null);
+});
