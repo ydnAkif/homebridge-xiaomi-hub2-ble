@@ -19,6 +19,12 @@ class XiaomiHub2BLEPlatform {
     this.accessories = new Map();
     this.updateInProgress = false;
     this.updateTimer = null;
+    this.stopped = false;
+    this.authBlocked = false;
+    this.failureCycles = 0;
+    this.sensorErrors = new Map();
+    this.lastSuccess = new Map();
+    this.staleAfterSeconds = Math.max(finiteNumberOrDefault(this.config.staleAfterSeconds, 1800), 300);
     this.deviceStates = {
       temp: {},
       humidity: {},
@@ -67,6 +73,7 @@ class XiaomiHub2BLEPlatform {
     });
 
     this.api.on('shutdown', () => {
+      this.stopped = true;
       if (this.updateTimer) {
         clearTimeout(this.updateTimer);
         this.updateTimer = null;
@@ -95,6 +102,7 @@ class XiaomiHub2BLEPlatform {
   }
 
   validateConfig() {
+    if (!this.validateNumberOption('staleAfterSeconds', this.config.staleAfterSeconds, { min: 300, max: 86400, integer: true })) return false;
     if (!this.config.userId || !this.config.ssecurity || !this.config.serviceToken) {
       this.log.error('Missing Xiaomi Cloud auth config: userId, ssecurity or serviceToken.');
       return false;
@@ -204,6 +212,7 @@ class XiaomiHub2BLEPlatform {
   }
 
   scheduleNextUpdate(nextPollInterval) {
+    if (this.stopped || this.authBlocked) return;
     if (this.updateTimer) {
       clearTimeout(this.updateTimer);
     }
@@ -366,9 +375,19 @@ class XiaomiHub2BLEPlatform {
         maxValue: 100,
         minStep: 0.1,
       });
+    this.setSensorFault(sensor, true);
+  }
+
+  setSensorFault(sensor, fault) {
+    const accessory = this.accessories.get(this.api.hap.uuid.generate(sensor.did));
+    if (!accessory || !Characteristic.StatusFault) return;
+    for (const type of [Service.TemperatureSensor, Service.HumiditySensor]) {
+      accessory.getService(type)?.updateCharacteristic(Characteristic.StatusFault, fault ? 1 : 0);
+    }
   }
 
   async updateAll() {
+    if (this.stopped || this.authBlocked) return;
     if (this.updateInProgress) {
       this.log.debug('Skipping update cycle because previous cycle is still running.');
       return;
@@ -377,14 +396,30 @@ class XiaomiHub2BLEPlatform {
     this.updateInProgress = true;
     const sensors = this.config.sensors || [];
     let motionDetectedInCycle = false;
+    let failed = 0;
 
     try {
       for (const sensor of sensors) {
+        if (this.stopped) break;
         try {
           const motionDetected = await this.updateSensor(sensor);
           motionDetectedInCycle = motionDetectedInCycle || motionDetected;
+          this.sensorErrors.delete(sensor.did);
         } catch (error) {
-          this.log.warn(`Update failed for ${sensor.name}: ${this.sanitizeLogMessage(error.message || error)}`);
+          failed++;
+          if (error.code === 'XIAOMI_AUTH_REQUIRED') {
+            this.authBlocked = true;
+            for (const configured of sensors) this.setSensorFault(configured, true);
+            this.log.error(this.sanitizeLogMessage(error.message));
+            break;
+          }
+          const message = this.sanitizeLogMessage(error.message || error);
+          if (this.sensorErrors.get(sensor.did) !== message) {
+            this.log.warn(`Update failed for ${sensor.name}: ${message}`);
+            this.sensorErrors.set(sensor.did, message);
+          }
+          const lastSuccess = this.lastSuccess.get(sensor.did) || 0;
+          if (Date.now() - lastSuccess > this.staleAfterSeconds * 1000) this.setSensorFault(sensor, true);
         }
       }
 
@@ -393,7 +428,9 @@ class XiaomiHub2BLEPlatform {
       }
     } finally {
       this.updateInProgress = false;
-      this.scheduleNextUpdate(this.getNextPollInterval());
+      this.failureCycles = failed === sensors.length ? Math.min(this.failureCycles + 1, 4) : 0;
+      const baseInterval = this.getNextPollInterval();
+      this.scheduleNextUpdate(Math.min(Math.max(900, baseInterval), baseInterval * (2 ** this.failureCycles)));
     }
   }
 
@@ -412,10 +449,24 @@ class XiaomiHub2BLEPlatform {
       this.cloud.getTemperature(sensor.did),
       this.cloud.getHumidity(sensor.did),
     ]);
+    if (this.stopped) return false;
 
     if (!Number.isFinite(temperature) || !Number.isFinite(humidity)) {
       throw new Error(`Invalid numeric payload for ${sensor.name}`);
     }
+    if (temperature < -50 || temperature > 100 || humidity < 0 || humidity > 100) {
+      throw new Error('Sensor measurement is outside the supported range');
+    }
+    const timestamps = this.cloud.readingTimes;
+    // Cloud history records property changes, so unchanged temperature can be old
+    // while a recent humidity report proves that the sensor is still reporting.
+    const measuredAt = timestamps ? Math.max(timestamps.get(`${sensor.did}:4100`) || 0, timestamps.get(`${sensor.did}:4102`) || 0) : Date.now();
+    if (Date.now() - measuredAt > this.staleAfterSeconds * 1000) {
+      this.setSensorFault(sensor, true);
+      throw new Error('Sensor data is stale; waiting for a fresh measurement');
+    }
+    this.lastSuccess.set(sensor.did, measuredAt);
+    this.setSensorFault(sensor, false);
 
     const stateId = sensor.did;
     const temperatureChanged = this.deviceStates.temp[stateId] !== temperature;
