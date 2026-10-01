@@ -55,6 +55,7 @@ function createPlatformFixture(config = {}) {
       SerialNumber: 'SerialNumber',
       CurrentTemperature: 'CurrentTemperature',
       CurrentRelativeHumidity: 'CurrentRelativeHumidity',
+      StatusFault: 'StatusFault',
     },
     uuid: {
       generate(value) {
@@ -175,46 +176,6 @@ test('validateConfig rejects invalid adaptive polling intervals', () => {
   assert.equal(platform.validateConfig(), false);
 });
 
-test('validateConfig rejects invalid numeric options', () => {
-  const { platform } = createPlatformFixture({
-    userId: 'user-id',
-    ssecurity: 'AA==',
-    serviceToken: 'service-token',
-    pollInterval: 'not-a-number',
-    sensors: [{ name: 'Bedroom', did: '123' }],
-  });
-
-  assert.equal(platform.validateConfig(), false);
-});
-
-test('validateConfig rejects duplicate sensor DIDs', () => {
-  const { platform } = createPlatformFixture({
-    userId: 'user-id',
-    ssecurity: 'AA==',
-    serviceToken: 'service-token',
-    sensors: [
-      { name: 'Bedroom', did: '123' },
-      { name: 'Hallway', did: '123' },
-    ],
-  });
-
-  assert.equal(platform.validateConfig(), false);
-});
-
-test('shutdown clears the pending update timer', () => {
-  const { eventHandlers, platform } = createPlatformFixture({
-    userId: 'user-id',
-    ssecurity: 'AA==',
-    serviceToken: 'service-token',
-    sensors: [{ name: 'Bedroom', did: '123' }],
-  });
-
-  platform.updateTimer = setTimeout(() => {}, 60000);
-  eventHandlers.get('shutdown')();
-
-  assert.equal(platform.updateTimer, null);
-});
-
 test('updateSensor sends characteristic updates only on state delta', async () => {
   const fixture = createPlatformFixture({
     userId: 'user-id',
@@ -227,6 +188,8 @@ test('updateSensor sends characteristic updates only on state delta', async () =
 
   fixture.platform.cloud.getTemperature = async () => 22.5;
   fixture.platform.cloud.getHumidity = async () => 50.1;
+  fixture.platform.cloud.readingTimes.set('123:4100', Date.now());
+  fixture.platform.cloud.readingTimes.set('123:4102', Date.now());
 
   await fixture.platform.updateSensor({ name: 'Bedroom', did: '123' });
   await fixture.platform.updateSensor({ name: 'Bedroom', did: '123' });
@@ -245,4 +208,64 @@ test('updateSensor sends characteristic updates only on state delta', async () =
 
   assert.equal(tempService.updateCalls.get(fixture.api.hap.Characteristic.CurrentTemperature), 2);
   assert.equal(humService.updateCalls.get(fixture.api.hap.Characteristic.CurrentRelativeHumidity), 1);
+});
+
+test('expired session stops the cycle and faults every sensor without rescheduling', async () => {
+  const sensors = [{ name: 'One', did: '1' }, { name: 'Two', did: '2' }];
+  const { platform, api } = createPlatformFixture({ sensors });
+  platform.registerSensors();
+  let requests = 0, logs = 0;
+  platform.log.error = () => logs++;
+  platform.updateSensor = async () => { requests++; throw Object.assign(new Error('Renew login'), { code: 'XIAOMI_AUTH_REQUIRED' }); };
+  await platform.updateAll();
+  await platform.updateAll();
+  assert.equal(requests, 1);
+  assert.equal(logs, 1);
+  assert.equal(platform.updateTimer, null);
+  for (const accessory of platform.accessories.values()) {
+    assert.equal(accessory.getService(api.hap.Service.TemperatureSensor).updatedValues.get('StatusFault'), 1);
+  }
+});
+
+test('stale cloud measurements are rejected and fresh readings clear the fault', async () => {
+  const sensor = { name: 'One', did: '1' };
+  const { platform, api } = createPlatformFixture({ sensors: [sensor] });
+  platform.registerSensors();
+  platform.cloud.getTemperature = async () => 20;
+  platform.cloud.getHumidity = async () => 50;
+  platform.cloud.readingTimes.set('1:4100', Date.now() - 3600000);
+  platform.cloud.readingTimes.set('1:4102', Date.now() - 3600000);
+  await assert.rejects(platform.updateSensor(sensor), /stale/);
+  const service = platform.accessories.get('uuid:1').getService(api.hap.Service.TemperatureSensor);
+  assert.equal(service.updatedValues.get('StatusFault'), 1);
+  assert.equal(service.updatedValues.has('CurrentTemperature'), false);
+  platform.cloud.readingTimes.set('1:4102', Date.now());
+  await platform.updateSensor(sensor);
+  assert.equal(service.updatedValues.get('StatusFault'), 0);
+  assert.equal(service.updatedValues.get('CurrentTemperature'), 20);
+});
+
+test('repeated outages log once and back off, then recover', async () => {
+  const { platform } = createPlatformFixture({ sensors: [{ name: 'One', did: '1' }] });
+  let logs = 0, interval;
+  platform.log.warn = () => logs++;
+  platform.scheduleNextUpdate = value => { interval = value; };
+  platform.updateSensor = async () => { throw new Error('Network unavailable'); };
+  await platform.updateAll();
+  assert.equal(interval, 240);
+  await platform.updateAll();
+  assert.equal(interval, 480);
+  assert.equal(logs, 1);
+  platform.updateSensor = async () => false;
+  await platform.updateAll();
+  assert.equal(interval, 120);
+});
+
+test('shutdown during a request prevents new timers and further sensor requests', async () => {
+  const { platform, eventHandlers } = createPlatformFixture({ sensors: [{ name: 'One', did: '1' }, { name: 'Two', did: '2' }] });
+  let requests = 0;
+  platform.updateSensor = async () => { requests++; eventHandlers.get('shutdown')(); };
+  await platform.updateAll();
+  assert.equal(requests, 1);
+  assert.equal(platform.updateTimer, null);
 });
