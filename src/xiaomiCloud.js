@@ -314,6 +314,18 @@ class XiaomiCloud {
     return this.decodeBleValue(raw);
   }
 
+  async getBattery(did) {
+    const raw = await this.getUserDeviceData(did, '4106');
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (_) { throw new Error('Invalid battery payload JSON'); }
+    if (!Array.isArray(parsed) || parsed.length !== 1 || typeof parsed[0] !== 'string' || !/^[0-9a-f]{2}$/i.test(parsed[0])) {
+      throw new Error('Invalid battery payload; expected one BLE byte');
+    }
+    const level = parseInt(parsed[0], 16);
+    if (level > 100) throw new Error('Battery percentage is outside 0..100');
+    return level;
+  }
+
   async getRawValue(did, key) {
     return this.getUserDeviceData(did, key);
   }

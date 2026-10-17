@@ -24,6 +24,9 @@ class XiaomiHub2BLEPlatform {
     this.failureCycles = 0;
     this.sensorErrors = new Map();
     this.lastSuccess = new Map();
+    this.batteryReadings = new Map();
+    this.batteryNextPoll = new Map();
+    this.batteryErrors = new Map();
     this.staleAfterSeconds = Math.max(finiteNumberOrDefault(this.config.staleAfterSeconds, 1800), 300);
     this.deviceStates = {
       temp: {},
@@ -375,7 +378,66 @@ class XiaomiHub2BLEPlatform {
         maxValue: 100,
         minStep: 0.1,
       });
+    let batteryService = accessory.getService(Service.Battery);
+    if (!batteryService) {
+      batteryService = accessory.addService(Service.Battery, `${sensor.name} Battery`, 'battery');
+    }
+    const cached = accessory.context.battery;
+    if (cached && Number.isInteger(cached.level) && cached.level >= 0 && cached.level <= 100 && Number.isFinite(cached.measuredAt)) {
+      this.batteryReadings.set(sensor.did, cached);
+    }
+    batteryService.getCharacteristic(Characteristic.BatteryLevel)
+      .onGet(() => this.getBatteryLevel(sensor.did));
+    batteryService.getCharacteristic(Characteristic.StatusLowBattery)
+      .onGet(() => this.getBatteryLevel(sensor.did) < 20 ? 1 : 0);
+    batteryService.updateCharacteristic(Characteristic.ChargingState, 2); // Not chargeable.
     this.setSensorFault(sensor, true);
+  }
+
+  getBatteryLevel(did) {
+    const reading = this.batteryReadings.get(did);
+    // Battery reports normally arrive about every 12 hours, independently of measurements.
+    if (!reading || reading.measuredAt > Date.now() + 300000 || Date.now() - reading.measuredAt > 48 * 3600000) {
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+    return reading.level;
+  }
+
+  async updateBattery(sensor, accessory) {
+    if (this.stopped || Date.now() < (this.batteryNextPoll.get(sensor.did) || 0)) return;
+    this.batteryNextPoll.set(sensor.did, Date.now() + 300000);
+    try {
+      const level = await this.cloud.getBattery(sensor.did);
+      if (this.stopped) return;
+      const measuredAt = this.cloud.readingTimes.get(`${sensor.did}:4106`);
+      if (!Number.isInteger(level) || level < 0 || level > 100 || !Number.isFinite(measuredAt) || measuredAt > Date.now() + 300000 || Date.now() - measuredAt > 48 * 3600000) {
+        throw new Error('Battery data is invalid or older than 48 hours');
+      }
+      const previous = this.batteryReadings.get(sensor.did);
+      const reading = { level, measuredAt };
+      this.batteryReadings.set(sensor.did, reading);
+      accessory.context.battery = reading;
+      if (!previous || previous.measuredAt !== measuredAt || previous.level !== level) {
+        this.api.updatePlatformAccessories?.([accessory]);
+      }
+      const service = accessory.getService(Service.Battery);
+      service.updateCharacteristic(Characteristic.BatteryLevel, level);
+      service.updateCharacteristic(Characteristic.StatusLowBattery, level < 20 ? 1 : 0);
+      this.batteryErrors.delete(sensor.did);
+      this.batteryNextPoll.set(sensor.did, Date.now() + 3600000);
+      if (level < 20 && (!previous || previous.level >= 20)) {
+        this.log.warn(`${sensor.name}: low battery (${level}%). Replace the sensor battery.`);
+      } else if (!previous || previous.level !== level) {
+        this.log.info(`${sensor.name}: battery ${level}%`);
+      }
+    } catch (error) {
+      if (error.code === 'XIAOMI_AUTH_REQUIRED') throw error;
+      const message = this.sanitizeLogMessage(error.message || error);
+      if (this.batteryErrors.get(sensor.did) !== message) {
+        this.log.warn(`${sensor.name}: battery unavailable: ${message}`);
+        this.batteryErrors.set(sensor.did, message);
+      }
+    }
   }
 
   setSensorFault(sensor, fault) {
@@ -488,6 +550,8 @@ class XiaomiHub2BLEPlatform {
     } else {
       this.log.debug(logMessage);
     }
+
+    await this.updateBattery(sensor, accessory);
 
     if (!this.adaptivePollingEnabled) {
       return false;

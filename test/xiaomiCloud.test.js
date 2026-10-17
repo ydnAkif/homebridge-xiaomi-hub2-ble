@@ -9,6 +9,18 @@ test.afterEach(() => {
 
 const originalAxiosPost = axios.post;
 
+test('battery decodes real cloud history as one unsigned byte without scaling', async () => {
+  const cloud = createCloud();
+  for (const [raw, expected] of [['["64"]', 100], ['["32"]', 50], ['["0a"]', 10], ['["00"]', 0]]) {
+    cloud.getUserDeviceData = async (_did, key) => { assert.equal(key, '4106'); return raw; };
+    assert.equal(await cloud.getBattery('sensor'), expected);
+  }
+  for (const raw of ['garbage', '[]', '["6400"]', '["ff"]', '["gg"]', '[100]', '["64","32"]']) {
+    cloud.getUserDeviceData = async () => raw;
+    await assert.rejects(cloud.getBattery('sensor'), /battery|Battery/);
+  }
+});
+
 function createCloud(overrides = {}) {
   return new XiaomiCloud({
     userId: 'user-id',

@@ -2,6 +2,81 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const XiaomiHub2BLEPlatform = require('../src/platform');
 
+function batteryFixture() {
+  const sensor = { name: 'Kitchen', did: '123' };
+  const f = createPlatformFixture({ sensors: [sensor] });
+  f.platform.registerSensors();
+  f.sensor = sensor;
+  f.accessory = f.platform.accessories.get('uuid:123');
+  f.setBattery = (level, ageHours = 0) => {
+    f.platform.batteryNextPoll.delete(sensor.did);
+    f.platform.cloud.getBattery = async () => level;
+    f.platform.cloud.readingTimes.set('123:4106', Date.now() - ageHours * 3600000);
+  };
+  return f;
+}
+
+test('battery service reports low battery below 20, recovers and polls only hourly', async () => {
+  const f = batteryFixture();
+  const warnings = [];
+  f.platform.log.warn = message => warnings.push(message);
+  const service = f.accessory.getService(f.api.hap.Service.Battery);
+  for (const level of [100, 20, 19, 10, 0, 100, 10]) {
+    f.setBattery(level);
+    await f.platform.updateBattery(f.sensor, f.accessory);
+    assert.equal(service.updatedValues.get('BatteryLevel'), level);
+    assert.equal(service.updatedValues.get('StatusLowBattery'), level < 20 ? 1 : 0);
+    assert.equal(service.getCharacteristic('BatteryLevel').getter(), level);
+  }
+  assert.equal(warnings.length, 2); // One per low-battery episode, including after recovery.
+  f.platform.cloud.getBattery = async () => { throw Error('should not poll twice'); };
+  await f.platform.updateBattery(f.sensor, f.accessory);
+  assert.equal(warnings.length, 2);
+  assert.equal(service.updatedValues.get('ChargingState'), 2);
+});
+
+test('battery is unknown before first report and stale cached percentages are not served', async () => {
+  const f = batteryFixture();
+  const unavailable = e => e.hapStatus === -70402;
+  assert.throws(() => f.platform.getBatteryLevel('123'), unavailable);
+  f.setBattery(50, 12);
+  await f.platform.updateBattery(f.sensor, f.accessory);
+  assert.equal(f.platform.getBatteryLevel('123'), 50);
+  f.platform.batteryReadings.get('123').measuredAt = Date.now() - 49 * 3600000;
+  assert.throws(() => f.platform.getBatteryLevel('123'), unavailable);
+  f.setBattery(100, 49);
+  await f.platform.updateBattery(f.sensor, f.accessory);
+  assert.throws(() => f.platform.getBatteryLevel('123'), unavailable);
+});
+
+test('battery failures leave measurements working, deduplicate warnings and propagate expired auth', async () => {
+  const f = batteryFixture();
+  const warnings = [];
+  f.platform.log.warn = message => warnings.push(message);
+  f.platform.cloud.getTemperature = async () => 22;
+  f.platform.cloud.getHumidity = async () => 60;
+  f.platform.cloud.readingTimes.set('123:4100', Date.now());
+  f.platform.cloud.readingTimes.set('123:4102', Date.now());
+  f.platform.cloud.getBattery = async () => { throw Error('No battery report'); };
+  await f.platform.updateSensor(f.sensor);
+  f.platform.batteryNextPoll.delete('123');
+  await f.platform.updateSensor(f.sensor);
+  assert.equal(warnings.length, 1);
+  assert.equal(f.accessory.getService('TemperatureSensor').updatedValues.get('CurrentTemperature'), 22);
+  f.platform.batteryNextPoll.delete('123');
+  f.platform.cloud.getBattery = async () => { throw Object.assign(Error('renew login'), { code: 'XIAOMI_AUTH_REQUIRED' }); };
+  await assert.rejects(f.platform.updateSensor(f.sensor), { code: 'XIAOMI_AUTH_REQUIRED' });
+});
+
+test('battery data restored from accessory context survives restart without overwriting a later report', async () => {
+  const f = batteryFixture();
+  f.setBattery(10, 1);
+  await f.platform.updateBattery(f.sensor, f.accessory);
+  f.platform.batteryReadings.clear();
+  f.platform.ensureServices(f.accessory, f.sensor);
+  assert.equal(f.platform.getBatteryLevel('123'), 10);
+});
+
 function createPlatformFixture(config = {}) {
   const registered = [];
   const unregistered = [];
@@ -26,6 +101,7 @@ function createPlatformFixture(config = {}) {
       if (!this.characteristics.has(characteristic)) {
         const store = { props: null };
         this.characteristics.set(characteristic, {
+          onGet(handler) { this.getter = handler; return this; },
           setProps(props) {
             store.props = props;
             return this;
@@ -48,6 +124,7 @@ function createPlatformFixture(config = {}) {
       AccessoryInformation: 'AccessoryInformation',
       TemperatureSensor: 'TemperatureSensor',
       HumiditySensor: 'HumiditySensor',
+      Battery: 'Battery',
     },
     Characteristic: {
       Manufacturer: 'Manufacturer',
@@ -56,7 +133,10 @@ function createPlatformFixture(config = {}) {
       CurrentTemperature: 'CurrentTemperature',
       CurrentRelativeHumidity: 'CurrentRelativeHumidity',
       StatusFault: 'StatusFault',
+      BatteryLevel: 'BatteryLevel', StatusLowBattery: 'StatusLowBattery', ChargingState: 'ChargingState',
     },
+    HapStatusError: class extends Error { constructor(status) { super(String(status)); this.hapStatus = status; } },
+    HAPStatus: { SERVICE_COMMUNICATION_FAILURE: -70402 },
     uuid: {
       generate(value) {
         return `uuid:${value}`;
@@ -107,6 +187,7 @@ function createPlatformFixture(config = {}) {
   };
 
   const platform = new XiaomiHub2BLEPlatform(log, config, api);
+  platform.cloud.getBattery = async () => { throw new Error("No battery fixture data"); };
 
   return {
     api,

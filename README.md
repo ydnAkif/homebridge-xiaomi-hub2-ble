@@ -261,3 +261,22 @@ Expired or rejected Xiaomi sessions stop polling after one actionable error. Ren
 `staleAfterSeconds` defaults to 1800 (range 300–86400). Both HomeKit sensor services expose StatusFault until a fresh sensor report is available. Cloud history timestamps are property-change times: the latest temperature or humidity report indicates sensor activity, so an unchanged temperature does not alone make a sensor faulty. Values outside the supported ranges or malformed BLE payloads are rejected.
 
 Repeated identical sensor failures log once until recovery. Entire-platform outages back off exponentially up to 15 minutes, or the configured polling interval if longer. Successful readings restore normal polling and clear faults. Shutdown prevents new timers and ignores in-flight results.
+
+
+## Battery level (0.1.4-ydnakif.1)
+
+Every configured temperature/humidity accessory now includes a HomeKit Battery service.
+Xiaomi Cloud property `4106` is decoded as one unsigned hexadecimal byte: `64` = 100%,
+`32` = 50%, `0a` = 10%. Values below 20% set HomeKit StatusLowBattery and log one warning
+per low-battery episode. Values are supplied by the sensor, not a measured capacity or health estimate.
+Apple Home chooses where to display the battery status; adding this service does not guarantee a push notification.
+
+Battery queries run at most hourly (five-minute retry after a failed query), independently
+of the normal temperature/humidity polling interval. Sensors typically report battery
+about every 12 hours, so percentages may lag. Reports older than 48 hours, or missing
+reports, return an unavailable battery characteristic rather than inventing 0% or 100%.
+A failed battery query does not stop valid temperature/humidity updates; expired Xiaomi
+credentials still stop all cloud polling until renewed. Battery data is retained in accessory
+context across restarts. Existing accessory UUIDs, room assignments and HomeKit pairings are preserved.
+
+No new configuration is required. Deploy and restart only this child bridge.
