@@ -387,3 +387,12 @@ test('shutdown clears the pending update timer', () => {
 
   assert.equal(platform.updateTimer, null);
 });
+
+test('unchanged battery values with repeated 12-hour reports remain valid', async () => {
+  const f = batteryFixture();
+  for (const age of [12, 6, 0]) {
+    f.setBattery(100, age);
+    await f.platform.updateBattery(f.sensor, f.accessory);
+    assert.equal(f.platform.getBatteryLevel('123'), 100);
+  }
+});
